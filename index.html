@@ -36,6 +36,9 @@
   #status{font-size:13px;margin-top:10px;color:var(--mut);min-height:18px}
   .ok{color:#1db954!important}.err{color:#ff6b5a!important}
   ol{padding-left:20px}
+  input[type=range]{padding:0;height:34px;accent-color:#1db954;border:0;background:none}
+  .vv{color:var(--txt)}
+  .vv.live{color:#1db954}
   #songPanel{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;flex-direction:column;z-index:10}
   #songPanel.open{display:flex}
   #songHead{display:flex;align-items:center;gap:10px;padding:16px;max-width:560px;width:100%;margin:0 auto}
@@ -115,13 +118,13 @@
   <details>
     <summary>Lautstärke (%)</summary>
     <div class="grid">
-      <label>🔥 Arbeit<input id="vWork" type="number" min="0" max="100" value="100"></label>
-      <label>😮‍💨 Pause<input id="vRest" type="number" min="0" max="100" value="50"></label>
-      <label>🔄 Postenwechsel + Vorbereitung<input id="vChange" type="number" min="0" max="100" value="70"></label>
-      <label>🟠 Einwärmen + Workout<input id="vWarm" type="number" min="0" max="100" value="80"></label>
-      <label>🌿 Schluss<input id="vCool" type="number" min="0" max="100" value="50"></label>
+      <label>🔥 Arbeit <b id="vWorkVal" class="vv"></b><input id="vWork" type="range" min="0" max="100" step="5" value="100"></label>
+      <label>😮‍💨 Pause <b id="vRestVal" class="vv"></b><input id="vRest" type="range" min="0" max="100" step="5" value="50"></label>
+      <label>🔄 Wechsel + Vorbereitung <b id="vChangeVal" class="vv"></b><input id="vChange" type="range" min="0" max="100" step="5" value="70"></label>
+      <label>🟠 Einwärmen + Workout <b id="vWarmVal" class="vv"></b><input id="vWarm" type="range" min="0" max="100" step="5" value="80"></label>
+      <label>🌿 Schluss <b id="vCoolVal" class="vv"></b><input id="vCool" type="range" min="0" max="100" step="5" value="50"></label>
     </div>
-    <p class="small">Feld leer = Lautstärke wird nicht verändert. Hinweis: Nicht jedes Gerät lässt sich fernsteuern – das iPhone z. B. oft nicht. Bluetooth-Boxen am Handy übernehmen die Handy-Lautstärke. Am zuverlässigsten klappt es mit Spotify auf Laptop/PC, Smart-Speaker oder Spotify-Connect-Box.</p>
+    <p class="small">Änderungen gelten <b>sofort</b>, auch während Training und Workout. Die gerade aktive Phase ist mit ▶ markiert. Hinweis: Nicht jedes Gerät lässt sich fernsteuern – das iPhone z. B. oft nicht. Bluetooth-Boxen am Handy übernehmen die Handy-Lautstärke. Am zuverlässigsten klappt es mit Spotify auf Laptop/PC, Smart-Speaker oder Spotify-Connect-Box.</p>
     <div id="volHint" class="small"></div>
   </details>
 
@@ -717,7 +720,27 @@ for(const f of FIELDS) $(f).addEventListener("change",saveSettings);
 for(const id of ["prep","stations","rounds","work","rest","change"]) $(id).addEventListener("change",replan);
 for(const id of LINK_FIELDS) $(id).addEventListener("input",()=>{ checkFields(); saveSettings(); });
 $("device").addEventListener("change",()=>{ volBlocked=false; curVol=null; renderVolHint(); });
-for(const id of ["vWork","vRest","vChange","vWarm"]) $(id).addEventListener("change",()=>{ curVol=null; });
+const VOL_IDS=["vWork","vRest","vChange","vWarm","vCool"];
+const VOL_OF={cool:"vCool",warm:"vWarm",group:"vWarm",work:"vWork",rest:"vRest",change:"vChange",prep:"vChange",done:"vRest"};
+function activeType(){
+  if(mode==="circuit") return plan[idx]?plan[idx].type:null;
+  if(mode==="warm"||mode==="group"||mode==="cool") return mode;
+  if(mode==="done") return "done";
+  return null;
+}
+function renderVolLabels(){
+  const act=VOL_OF[activeType()];
+  for(const id of VOL_IDS){ const el=$(id+"Val"); el.textContent=(id===act?"▶ ":"")+$(id).value+" %"; el.className="vv"+(id===act?" live":""); }
+}
+let volTimer=0;
+function liveVol(id){
+  renderVolLabels();
+  if(VOL_OF[activeType()]!==id) return;
+  clearTimeout(volTimer);
+  volTimer=setTimeout(()=>{ const v=volFor(activeType()); if(isYT(curUri)) ytVol(v); else if(connected()) setVol(v); },250);
+}
+for(const id of VOL_IDS){ $(id).addEventListener("input",()=>liveVol(id)); $(id).addEventListener("change",()=>liveVol(id)); }
+setInterval(renderVolLabels,500); renderVolLabels();
 checkFields();
 if(needYT()) loadYT();
 for(const id of LINK_FIELDS) $(id).addEventListener("change",()=>{ if(needYT()) loadYT(); });
