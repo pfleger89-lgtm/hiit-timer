@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HIIT Zirkel-Timer mit Spotify</title>
 <style>
-  :root{--bg:#111;--card:#1c1c1e;--txt:#f2f2f2;--mut:#9a9a9f;--work:#e5482d;--rest:#2fa55a;--change:#2f7de1;--prep:#6b6b70;--done:#8a5cd6}
+  :root{--bg:#111;--card:#1c1c1e;--txt:#f2f2f2;--mut:#9a9a9f;--work:#e5482d;--rest:#2fa55a;--change:#2f7de1;--prep:#6b6b70;--done:#8a5cd6;--warm:#d9831c;--group:#c2338a;--cool:#2a9d8f}
   *{box-sizing:border-box}
   body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
   main{max-width:560px;margin:0 auto;padding:16px}
   #stage{border-radius:20px;padding:22px 18px;text-align:center;background:var(--prep);transition:background .3s}
   #phase{font-size:28px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
   #count{font-size:120px;font-weight:800;line-height:1;margin:6px 0;font-variant-numeric:tabular-nums}
+  #count.clock{font-size:84px}
   #where{font-size:18px;opacity:.95}
   #next,#music{font-size:14px;opacity:.85;margin-top:6px}
   #bar{height:6px;background:rgba(255,255,255,.25);border-radius:3px;margin-top:14px;overflow:hidden}
@@ -19,6 +20,9 @@
   .row{display:flex;gap:8px;margin-top:12px}
   button{flex:1;font-size:17px;font-weight:600;padding:14px;border:0;border-radius:12px;background:#2c2c2e;color:var(--txt)}
   button.pri{background:#1db954;color:#000}
+  button.warm{background:var(--warm);color:#000}
+  button.group{background:var(--group);color:#fff}
+  button.cool{background:var(--cool);color:#fff}
   button:disabled{opacity:.4}
   details{background:var(--card);border-radius:14px;padding:12px 14px;margin-top:14px}
   summary{font-weight:700;font-size:16px;cursor:pointer}
@@ -32,6 +36,19 @@
   #status{font-size:13px;margin-top:10px;color:var(--mut);min-height:18px}
   .ok{color:#1db954!important}.err{color:#ff6b5a!important}
   ol{padding-left:20px}
+  #songPanel{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;flex-direction:column;z-index:10}
+  #songPanel.open{display:flex}
+  #songHead{display:flex;align-items:center;gap:10px;padding:16px;max-width:560px;width:100%;margin:0 auto}
+  #songHead h2{flex:1;font-size:19px;margin:0}
+  #songHead button{flex:0 0 auto;padding:10px 14px}
+  #songList{overflow-y:auto;padding:0 16px 24px;max-width:560px;width:100%;margin:0 auto;flex:1}
+  .song{display:flex;align-items:center;gap:10px;width:100%;text-align:left;margin-top:8px;padding:14px;background:#1c1c1e;font-weight:500}
+  .song .t{flex:1}
+  .song .n{display:block;font-weight:700;font-size:16px}
+  .song .a{display:block;font-size:13px;color:var(--mut);margin-top:2px}
+  .song .d{font-size:14px;color:var(--mut);font-variant-numeric:tabular-nums}
+  .song.played{opacity:.55}
+  .song.played .n::after{content:" ✓"}
 </style>
 </head>
 <body>
@@ -39,21 +56,29 @@
   <div id="stage">
     <div id="phase">Bereit</div>
     <div id="count">--</div>
-    <div id="where">Gesamtdauer: <span id="total"></span></div>
+    <div id="where">Zirkel-Dauer: <span id="total"></span></div>
     <div id="next"></div>
     <div id="music"></div>
     <div id="endtime" style="font-size:16px;font-weight:600;margin-top:8px"></div>
     <div id="bar"><div></div></div>
   </div>
   <div class="row">
-    <button id="btnStart" class="pri">Start</button>
+    <button id="btnWarm" class="warm">Training starten</button>
+    <button id="btnGroup" class="group">Gemeinsames Workout</button>
+  </div>
+  <div class="row">
+    <button id="btnStart" class="pri">Zirkel starten</button>
     <button id="btnPause" disabled>Pause</button>
+  </div>
+  <div class="row">
+    <button id="btnCool" class="cool">Schluss</button>
   </div>
   <div class="row">
     <button id="btnSkip" disabled>Phase überspringen</button>
     <button id="btnStop" disabled>Stopp</button>
   </div>
   <div id="status"></div>
+  <div id="ytBox" style="display:none;margin-top:14px"><div class="small" style="margin-bottom:6px">▶️ YouTube-Player</div><div id="ytPlayer"></div></div>
 
   <details open>
     <summary>Zeiten</summary>
@@ -65,15 +90,18 @@
       <label>Pause / OFF (s)<input id="rest" type="number" min="0" value="10"></label>
       <label>Postenwechsel (s)<input id="change" type="number" min="0" value="45"></label>
     </div>
-    <p class="small">Nach der letzten Runde eines Postens geht es direkt in den Wechsel (keine zusätzliche 10-s-Pause).</p>
+    <p class="small">Nach der letzten Runde eines Postens geht es direkt in den Wechsel (keine zusätzliche 10-s-Pause).<br>✏️ Alle Zeiten kannst du auch <b>während des Zirkels</b> ändern – der Timer rechnet sofort mit den neuen Werten und passt die Endzeit an.</p>
   </details>
 
   <details>
     <summary>Musik (Spotify-Links)</summary>
-    <p class="small">In Spotify bei einer Playlist/einem Album/Song „Teilen → Link kopieren“ und hier einfügen. Feld leer = Musik läuft einfach weiter.</p>
+    <p class="small">Spotify- <b>oder YouTube</b>-Link einfügen (Spotify: „Teilen → Link kopieren“, YouTube: „Teilen → Kopieren“). Auch gemischt möglich. Feld leer = Musik läuft einfach weiter.</p>
+    <label>🟠 Einwärmen („Training starten“)<input id="mWarm" placeholder="https://open.spotify.com/playlist/…"></label>
+    <label>💪 Gemeinsames Workout (eigene Playlist)<input id="mGroup" placeholder="https://open.spotify.com/playlist/…"></label>
     <label>🔥 Trainingsmusik (ON)<input id="mWork" placeholder="https://open.spotify.com/playlist/…"></label>
     <label>😮‍💨 Pausenmusik (OFF)<input id="mRest" placeholder="https://open.spotify.com/playlist/…"></label>
     <label>🔄 Postenwechsel-Musik<input id="mChange" placeholder="https://open.spotify.com/playlist/…"></label>
+    <label>🌿 Schluss / Entspannung<input id="mCool" placeholder="https://open.spotify.com/playlist/…"></label>
     <label>⏳ Vorbereitung (leer = Wechselmusik)<input id="mPrep" placeholder="optional"></label>
     <label>Am Ende
       <select id="endMode"><option value="rest">Pausenmusik weiterlaufen lassen</option><option value="stop">Musik stoppen</option></select>
@@ -82,6 +110,19 @@
     <label class="chk"><input id="shuffle" type="checkbox"> Zufallswiedergabe</label>
     <label>Vorlauf für Musikwechsel (ms)<input id="lead" type="number" min="0" value="700"></label>
     <p class="small">Spotify braucht ca. 0,3–1 s zum Umschalten. Der Vorlauf startet den Wechsel etwas früher, damit die Musik pünktlich zum Signal kommt.</p>
+  </details>
+
+  <details>
+    <summary>Lautstärke (%)</summary>
+    <div class="grid">
+      <label>🔥 Arbeit<input id="vWork" type="number" min="0" max="100" value="100"></label>
+      <label>😮‍💨 Pause<input id="vRest" type="number" min="0" max="100" value="50"></label>
+      <label>🔄 Postenwechsel + Vorbereitung<input id="vChange" type="number" min="0" max="100" value="70"></label>
+      <label>🟠 Einwärmen + Workout<input id="vWarm" type="number" min="0" max="100" value="80"></label>
+      <label>🌿 Schluss<input id="vCool" type="number" min="0" max="100" value="50"></label>
+    </div>
+    <p class="small">Feld leer = Lautstärke wird nicht verändert. Hinweis: Nicht jedes Gerät lässt sich fernsteuern – das iPhone z. B. oft nicht. Bluetooth-Boxen am Handy übernehmen die Handy-Lautstärke. Am zuverlässigsten klappt es mit Spotify auf Laptop/PC, Smart-Speaker oder Spotify-Connect-Box.</p>
+    <div id="volHint" class="small"></div>
   </details>
 
   <details>
@@ -114,10 +155,16 @@
   </details>
 </main>
 
+<div id="songPanel">
+  <div id="songHead"><h2>💪 Lied wählen</h2><button id="btnBackWarm" style="display:none">Zurück zum Einwärmen</button><button id="btnClosePanel">✕</button></div>
+  <div id="songList"></div>
+</div>
+
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const FIELDS = ["prep","stations","rounds","work","rest","change","mWork","mRest","mChange","mPrep","endMode","resume","shuffle","lead","beeps","voice","clientId","device"];
+const FIELDS = ["prep","stations","rounds","work","rest","change","mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool","endMode","resume","shuffle","lead","vWork","vRest","vChange","vWarm","vCool","beeps","voice","clientId","device"];
+const LINK_FIELDS = ["mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool"];
 const store = {
   get(k){ try{ return localStorage.getItem("hiit_"+k); }catch(e){ return null; } },
   set(k,v){ try{ localStorage.setItem("hiit_"+k,v); }catch(e){} },
@@ -137,14 +184,42 @@ function cfg(){
 function toUri(s){
   s=(s||"").trim(); if(!s) return "";
   const m=s.match(/(playlist|album|track|artist|show|episode)[\/:]([A-Za-z0-9]{22})/);
-  return m ? `spotify:${m[1]}:${m[2]}` : "";
+  if(m) return `spotify:${m[1]}:${m[2]}`;
+  if(/^[A-Za-z0-9]{22}$/.test(s)) return `spotify:playlist:${s}`;
+  return "";
 }
+function linkProblem(s){
+  s=(s||"").trim();
+  if(!s) return "Feld ist leer.";
+  if(/spotify\.link|spoti\.fi/.test(s)) return "Das ist ein Spotify-Kurzlink. Link im Browser öffnen, dann die lange Adresse (open.spotify.com/playlist/…) aus der Adresszeile kopieren und hier einfügen.";
+  return "Link nicht erkannt. Er muss so aussehen: https://open.spotify.com/playlist/… oder https://www.youtube.com/watch?v=…";
+}
+function checkFields(){
+  for(const id of LINK_FIELDS){
+    const el=$(id), v=el.value.trim(); let hint=$(id+"Hint");
+    if(!hint){ hint=document.createElement("div"); hint.id=id+"Hint"; el.insertAdjacentElement("afterend",hint); }
+    hint.className="small";
+    if(!v){ hint.textContent=""; continue; }
+    const u=toUri(v), y=parseYT(v);
+    if(id==="mGroup" && y){ hint.textContent="✖ Für die Liedauswahl geht nur eine eigene Spotify-Playlist."; hint.className="small err"; }
+    else if(id==="mGroup" && u && !u.startsWith("spotify:playlist:")){ hint.textContent="✖ Hier bitte eine Playlist (kein Album/Song) eintragen."; hint.className="small err"; }
+    else if(y){ hint.textContent="✔ YouTube-"+(y.list?"Playlist":"Video")+" erkannt"; hint.className="small ok"; }
+    else if(u){ hint.textContent="✔ Spotify-Link erkannt"; hint.className="small ok"; }
+    else { hint.textContent="✖ "+linkProblem(v); hint.className="small err"; }
+  }
+}
+function srcKey(v){ const y=parseYT(v); return y?y.key:toUri(v); }
 function musicFor(type){
-  const w=toUri($("mWork").value), r=toUri($("mRest").value), c=toUri($("mChange").value), p=toUri($("mPrep").value)||c;
-  return {work:w,rest:r,change:c,prep:p,done:$("endMode").value==="rest"?r:""}[type]||"";
+  const w=srcKey($("mWork").value), r=srcKey($("mRest").value), c=srcKey($("mChange").value), p=srcKey($("mPrep").value)||c;
+  return {cool:srcKey($("mCool").value),warm:srcKey($("mWarm").value),work:w,rest:r,change:c,prep:p,done:$("endMode").value==="rest"?r:""}[type]||"";
 }
-const LABEL={prep:"Vorbereitung",work:"Arbeit",rest:"Pause",change:"Wechsel",done:"Fertig 🎉"};
-const COLOR={prep:"var(--prep)",work:"var(--work)",rest:"var(--rest)",change:"var(--change)",done:"var(--done)"};
+function volFor(type){
+  const id={cool:"vCool",warm:"vWarm",group:"vWarm",work:"vWork",rest:"vRest",change:"vChange",prep:"vChange",done:"vRest"}[type];
+  const v=id?$(id).value.trim():""; if(v==="") return null;
+  return Math.min(100,Math.max(0,parseInt(v,10)||0));
+}
+const LABEL={prep:"Vorbereitung",work:"Arbeit",rest:"Pause",change:"Wechsel",done:"Fertig 🎉",warm:"Einwärmen",group:"Gemeinsames Workout",cool:"Schluss · Entspannen"};
+const COLOR={prep:"var(--prep)",work:"var(--work)",rest:"var(--rest)",change:"var(--change)",done:"var(--done)",warm:"var(--warm)",group:"var(--group)",cool:"var(--cool)"};
 
 function buildPlan(c){
   const p=[];
@@ -159,10 +234,11 @@ function buildPlan(c){
   let t=0; for(const ph of p){ ph.start=t; t+=ph.dur*1000; ph.end=t; }
   return p;
 }
-const fmt = ms => { const s=Math.round(ms/1000); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
+const fmt = ms => { const s=Math.max(0,Math.round(ms/1000)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
 
 /* ---------- Audio-Signale ---------- */
 let actx=null;
+function initAudio(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume(); }catch(e){} primeYT(); }
 function beep(freq=880,dur=.15,vol=.5){
   if(!$("beeps").checked||!actx) return;
   const o=actx.createOscillator(), g=actx.createGain();
@@ -176,9 +252,9 @@ function say(text){
 }
 
 /* ---------- Spotify ---------- */
-const SCOPES="user-read-playback-state user-modify-playback-state";
+const SCOPES="user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative";
 const redirectUri = location.origin + location.pathname;
-const sp = { token:store.get("tok"), refresh:store.get("ref"), exp:+store.get("exp")||0 };
+const sp = { token:store.get("tok"), refresh:store.get("ref"), exp:+store.get("exp")||0, scope:store.get("scope")||"" };
 function setStatus(msg,cls=""){ const el=$("status"); el.textContent=msg; el.className=cls; }
 function b64url(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
 async function connect(){
@@ -193,8 +269,8 @@ async function connect(){
   location.href="https://accounts.spotify.com/authorize?"+q;
 }
 function saveTok(j){
-  sp.token=j.access_token; sp.exp=Date.now()+(j.expires_in-60)*1000; if(j.refresh_token) sp.refresh=j.refresh_token;
-  store.set("tok",sp.token); store.set("exp",sp.exp); if(sp.refresh) store.set("ref",sp.refresh);
+  sp.token=j.access_token; sp.exp=Date.now()+(j.expires_in-60)*1000; if(j.refresh_token) sp.refresh=j.refresh_token; if(j.scope) sp.scope=j.scope;
+  store.set("tok",sp.token); store.set("exp",sp.exp); if(sp.refresh) store.set("ref",sp.refresh); store.set("scope",sp.scope);
 }
 async function tokenRequest(params){
   const r=await fetch("https://accounts.spotify.com/api/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams(params)});
@@ -218,65 +294,302 @@ async function ensureToken(){
   catch(e){ sp.token=sp.refresh=null; store.del("tok"); store.del("ref"); renderSpState(); return false; }
 }
 async function api(method,path,body){
-  if(!await ensureToken()) throw new Error("nicht verbunden");
+  if(!await ensureToken()) throw new Error("Nicht mit Spotify verbunden.");
   const r=await fetch("https://api.spotify.com/v1"+path,{method,headers:{Authorization:"Bearer "+sp.token,...(body?{"Content-Type":"application/json"}:{})},body:body?JSON.stringify(body):undefined});
   if(r.status===204||r.status===202) return null;
   const txt=await r.text(); let j=null; try{ j=txt?JSON.parse(txt):null; }catch(e){}
   if(!r.ok){
     const reason=j&&j.error&&(j.error.reason||j.error.message)||r.status;
-    if(r.status===404) throw new Error("Kein aktives Spotify-Gerät – Spotify-App öffnen und kurz etwas abspielen.");
-    if(r.status===403) throw new Error("Spotify verweigert (Premium nötig?): "+reason);
-    if(r.status===429) throw new Error("Zu viele Anfragen an Spotify – kurz warten.");
-    throw new Error("Spotify-Fehler: "+reason);
+    const err=new Error(
+      r.status===404 ? "Kein aktives Spotify-Gerät – Spotify-App öffnen und kurz etwas abspielen." :
+      r.status===403 ? "Spotify verweigert: "+reason :
+      r.status===429 ? "Zu viele Anfragen an Spotify – kurz warten." : "Spotify-Fehler: "+reason);
+    err.status=r.status; throw err;
   }
   return j;
 }
 const connected = () => !!(sp.token||sp.refresh);
+const needsReconnect = () => connected() && sp.scope && !sp.scope.includes("playlist-read-private");
 function renderSpState(){
-  $("spState").innerHTML = connected() ? '<span class="ok">Verbunden ✔</span>' : "Nicht verbunden – der Timer läuft trotzdem (nur Signale).";
+  $("spState").innerHTML = !connected() ? "Nicht verbunden – der Timer läuft trotzdem (nur Signale)."
+    : needsReconnect() ? '<span class="err">Bitte einmal „Neu verbinden“ – für die Liedauswahl braucht es eine zusätzliche Berechtigung.</span>'
+    : '<span class="ok">Verbunden ✔</span>';
   $("btnConnect").textContent = connected() ? "Neu verbinden" : "Mit Spotify verbinden";
+}
+const devVol={};
+const devQ = (sep="?") => { const d=$("device").value; return d ? sep+"device_id="+encodeURIComponent(d) : ""; };
+function renderVolHint(){
+  const d=$("device").value, s=devVol[d];
+  $("volHint").textContent = (d && s===false) ? "⚠️ Das gewählte Gerät erlaubt keine Lautstärke-Steuerung über Spotify." : "";
+  $("volHint").className = "small err";
 }
 async function loadDevices(){
   renderSpState(); if(!connected()) return;
   try{
     const j=await api("GET","/me/player/devices"); const sel=$("device"), keep=store.get("f_device")||sel.value;
     sel.innerHTML='<option value="">Aktives Gerät verwenden</option>';
-    for(const d of (j&&j.devices)||[]){ const o=document.createElement("option"); o.value=d.id; o.textContent=`${d.name} (${d.type})${d.is_active?" – aktiv":""}`; sel.appendChild(o); }
+    for(const d of (j&&j.devices)||[]){ devVol[d.id]=d.supports_volume!==false; const o=document.createElement("option"); o.value=d.id; o.textContent=`${d.name} (${d.type})${d.is_active?" – aktiv":""}`; sel.appendChild(o); }
     if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
     if(!(j&&j.devices&&j.devices.length)) setStatus("Kein Gerät gefunden – Spotify-App öffnen und neu laden.","err");
+    renderVolHint();
   }catch(e){ setStatus(e.message,"err"); }
-}
-let curUri="", shuffleSet=false; const mem={};
-async function switchMusic(uri){
-  if(!connected()) return;
-  const dev=$("device").value, q=dev?"?device_id="+encodeURIComponent(dev):"";
-  try{
-    if(!uri){ if(curUri){ await rememberPos(); await api("PUT","/me/player/pause"+q); curUri=""; } return; }
-    if(uri===curUri) return;
-    await rememberPos();
-    if($("shuffle").checked && !shuffleSet){ try{ await api("PUT","/me/player/shuffle?state=true"+(dev?"&device_id="+encodeURIComponent(dev):"")); }catch(e){} shuffleSet=true; }
-    const m=$("resume").checked?mem[uri]:null; let body;
-    if(/^spotify:(track|episode):/.test(uri)) body={uris:[uri],position_ms:m?m.pos:0};
-    else { body={context_uri:uri}; if(m){ body.offset={uri:m.track}; body.position_ms=m.pos; } }
-    await api("PUT","/me/player/play"+q,body);
-    curUri=uri;
-    if(!/Spotify/.test($("status").textContent)) setStatus("");
-  }catch(e){ setStatus(e.message,"err"); }
-}
-async function rememberPos(){
-  if(!curUri||!$("resume").checked) return;
-  try{ const st=await api("GET","/me/player"); if(st&&st.item) mem[curUri]={track:st.item.uri,pos:st.progress_ms||0}; }catch(e){}
 }
 
-/* ---------- Timer ---------- */
+let curUri="", curVol=null, volBlocked=false, shuffleSet=false, spActive=false; const mem={};
+const isYT = k => !!k && k.startsWith("yt:");
+const isSp = k => !!k && k.startsWith("spotify:");
+async function rememberSp(key){
+  if(!isSp(key)||!$("resume").checked) return;
+  try{ const st=await api("GET","/me/player"); if(st&&st.item) mem[key]={track:st.item.uri,pos:st.progress_ms||0}; }catch(e){}
+}
+async function rememberPos(){ if(isYT(curUri)) rememberYT(curUri); else await rememberSp(curUri); }
+async function setVol(v){
+  if(v===null||v===curVol||volBlocked) return;
+  try{ await api("PUT",`/me/player/volume?volume_percent=${v}`+devQ("&")); curVol=v; }
+  catch(e){ if(e.status===403||e.status===400){ volBlocked=true; $("volHint").textContent="⚠️ Dieses Gerät lässt die Lautstärke nicht fernsteuern – Musik läuft trotzdem."; $("volHint").className="small err"; } }
+}
+async function pauseSpotify(){
+  if(!spActive||!connected()) return; spActive=false;
+  try{ await api("PUT","/me/player/pause"+devQ()); }catch(e){}
+}
+/* Musik + Lautstärke setzen. key leer = Musik weiterlaufen lassen (oder stoppen, wenn stopIfEmpty) */
+async function playMusic(key, vol, opts={}){
+  // --- YouTube (läuft synchron an, damit das Handy den Start erlaubt) ---
+  if(isYT(key)){
+    if(key!==curUri){
+      const prev=curUri;
+      if(isYT(prev)) rememberYT(prev);
+      ytPlay(key); curUri=key;
+      if(spActive){ (async()=>{ await rememberSp(prev); await pauseSpotify(); })(); }
+    }
+    ytVol(vol);
+    return true;
+  }
+  // --- Spotify oder leer ---
+  if(!key){
+    if(opts.stopIfEmpty && curUri){
+      if(isYT(curUri)){ rememberYT(curUri); ytPause(); }
+      else { await rememberSp(curUri); await pauseSpotify(); }
+      curUri="";
+    } else if(isYT(curUri)) ytVol(vol);
+    else if(connected()) await setVol(vol);
+    return true;
+  }
+  if(!connected()){ setStatus("Für Spotify-Musik zuerst mit Spotify verbinden.","err"); return false; }
+  try{
+    const jobs=[setVol(vol)];
+    if(key!==curUri){
+      if(isYT(curUri)){ rememberYT(curUri); ytPause(); } else await rememberSp(curUri);
+      if($("shuffle").checked && !shuffleSet && !opts.single){ try{ await api("PUT","/me/player/shuffle?state=true"+devQ("&")); }catch(e){} shuffleSet=true; }
+      const m=(!opts.single && $("resume").checked)?mem[key]:null; let body;
+      if(opts.single || /^spotify:(track|episode):/.test(key)) body={uris:[key],position_ms:m?m.pos:0};
+      else { body={context_uri:key}; if(m){ body.offset={uri:m.track}; body.position_ms=m.pos; } }
+      jobs.push(api("PUT","/me/player/play"+devQ(),body).then(()=>{ curUri=key; spActive=true; }));
+    }
+    await Promise.all(jobs);
+    if(/Spotify-Gerät|Zu viele|zuerst mit Spotify/.test($("status").textContent)) setStatus("");
+    return true;
+  }catch(e){ setStatus(e.message,"err"); return false; }
+}
+const applyPhase = type => playMusic(musicFor(type), volFor(type), {stopIfEmpty:type==="done"});
+
+/* ---------- YouTube ---------- */
+function parseYT(s){
+  s=(s||"").trim(); if(!/youtu\.?be/i.test(s)) return null;
+  const mv=s.match(/(?:[?&]v=|youtu\.be\/|\/shorts\/|\/embed\/|\/live\/)([A-Za-z0-9_-]{11})/);
+  const ml=s.match(/[?&]list=([A-Za-z0-9_-]+)/);
+  const v=mv?mv[1]:"", list=ml?ml[1]:"";
+  return (v||list)?{v,list,key:"yt:"+v+"|"+list}:null;
+}
+let ytPlayer=null, ytReady=false, ytActive=false, ytPrimed=false, ytSingle=false, ytWant=null;
+const needYT = () => LINK_FIELDS.some(id=>parseYT($(id).value));
+function loadYT(){
+  if(ytPlayer||$("ytApi")) return;
+  $("ytBox").style.display="";
+  const sc=document.createElement("script"); sc.id="ytApi"; sc.src="https://www.youtube.com/iframe_api";
+  sc.onerror=()=>setStatus("YouTube konnte nicht geladen werden (Internet?).","err");
+  document.head.appendChild(sc);
+}
+window.onYouTubeIframeAPIReady=()=>{
+  const first=LINK_FIELDS.map(id=>parseYT($(id).value)).find(Boolean)||{};
+  const pv={playsinline:1,rel:0};
+  if(!first.v && first.list){ pv.listType="playlist"; pv.list=first.list; }
+  ytPlayer=new YT.Player("ytPlayer",{height:"200",width:"100%",videoId:first.v||undefined,playerVars:pv,events:{
+    onReady:()=>{ ytReady=true; if(ytWant){ const k=ytWant; ytWant=null; ytPlay(k); ytVol(pendingYtVol); } },
+    onStateChange:e=>{
+      if(e.data===0 && ytActive){ // Ende -> von vorne
+        if(ytSingle){ ytPlayer.seekTo(0); ytPlayer.playVideo(); } else ytPlayer.playVideoAt(0);
+      }
+    },
+    onError:e=>{
+      const msg={2:"YouTube-Link ungültig.",5:"YouTube-Video kann hier nicht abgespielt werden.",100:"YouTube-Video nicht gefunden (gelöscht/privat).",101:"Dieses YouTube-Video darf nicht in anderen Seiten abgespielt werden – bitte ein anderes wählen.",150:"Dieses YouTube-Video darf nicht in anderen Seiten abgespielt werden – bitte ein anderes wählen."}[e.data]||("YouTube-Fehler "+e.data);
+      setStatus(msg,"err");
+    }}});
+};
+function ytPlay(key){
+  const [v,list]=key.slice(3).split("|");
+  ytPrimed=true; ytActive=true; ytSingle=!list;
+  if(!ytReady){ ytWant=key; loadYT(); return; }
+  const m=$("resume").checked?mem[key]:null;
+  try{
+    if(list){ ytPlayer.loadPlaylist({list,listType:"playlist",index:m?m.index:0,startSeconds:m?m.time:0}); if($("shuffle").checked) setTimeout(()=>{ try{ ytPlayer.setShuffle(true); }catch(e){} },800); }
+    else ytPlayer.loadVideoById({videoId:v,startSeconds:m?m.time:0});
+    ytPlayer.unMute();
+  }catch(e){ setStatus("YouTube-Fehler: "+e.message,"err"); }
+}
+function rememberYT(key){
+  if(!ytReady||!ytActive||!$("resume").checked) return;
+  try{ mem[key]={index:ytPlayer.getPlaylistIndex()>0?ytPlayer.getPlaylistIndex():0,time:ytPlayer.getCurrentTime()||0}; }catch(e){}
+}
+function ytPause(){ ytActive=false; try{ ytReady&&ytPlayer.pauseVideo(); }catch(e){} }
+let pendingYtVol=null;
+function ytVol(v){ if(v===null) return; pendingYtVol=v; try{ ytReady&&ytPlayer.setVolume(v); }catch(e){} }
+/* Beim ersten Antippen kurz stumm anspielen, damit das Handy spätere Starts erlaubt */
+function primeYT(){
+  if(!needYT()) return; loadYT();
+  if(!ytReady||ytPrimed) return;
+  ytPrimed=true;
+  try{ ytPlayer.mute(); ytPlayer.playVideo(); setTimeout(()=>{ try{ if(!ytActive) ytPlayer.pauseVideo(); ytPlayer.unMute(); }catch(e){} },600); }catch(e){}
+}
+
+/* ---------- Modus ---------- */
+let mode="idle"; // idle | warm | group | circuit | done
+let warmStart=0, coolStart=0, group=null, groupTimer=0;
+
+/* ---------- Einwärmen ---------- */
+async function startWarm(){
+  saveSettings(); initAudio(); stopCircuitInternals();
+  if(mode!=="warm"&&mode!=="group") warmStart=Date.now();
+  clearTimeout(groupTimer); group=null;
+  mode="warm"; setButtons(); requestWake(); renderFree();
+  if(!musicFor("warm")) setStatus("Tipp: Unter „Musik“ eine Einwärm-Playlist eintragen.","");
+  await applyPhase("warm");
+}
+
+/* ---------- Schluss ---------- */
+async function startCool(){
+  saveSettings(); initAudio(); stopCircuitInternals();
+  clearTimeout(groupTimer); group=null; closeSongs();
+  if(curUri==="__group__") curUri="";
+  coolStart=Date.now(); mode="cool"; setButtons(); requestWake(); renderFree();
+  if(!musicFor("cool")) setStatus("Tipp: Unter „Musik“ eine Entspannungs-Playlist eintragen.","");
+  say("Schluss. Zeit zum Entspannen");
+  await applyPhase("cool");
+}
+
+/* ---------- Gemeinsames Workout ---------- */
+let songCache={uri:"",items:[]}; const played=new Set();
+async function loadSongs(){
+  const uri=toUri($("mGroup").value);
+  if(!uri||!uri.startsWith("spotify:playlist:")) throw new Error("Unter „Musik“ bei „Gemeinsames Workout“ eine Playlist eintragen.");
+  if(!connected()) throw new Error("Zuerst mit Spotify verbinden.");
+  if(needsReconnect()) throw new Error("Bitte unter „Spotify verbinden“ einmal „Neu verbinden“ – die Liedauswahl braucht eine zusätzliche Berechtigung.");
+  if(songCache.uri===uri && songCache.items.length) return songCache.items;
+  const id=uri.split(":")[2]; let path=`/playlists/${id}/items?limit=50`; const out=[];
+  try{
+    while(path){
+      const j=await api("GET",path);
+      for(const e of (j&&j.items)||[]){ const t=e.item||e.track; if(t&&t.uri&&!e.is_local&&t.type!=="episode") out.push({uri:t.uri,name:t.name,artists:(t.artists||[]).map(a=>a.name).join(", "),dur:t.duration_ms||0}); }
+      path = j&&j.next ? j.next.replace("https://api.spotify.com/v1","") : null;
+    }
+  }catch(e){
+    if(e.status===403||e.status===404) throw new Error("Spotify gibt die Lieder nicht heraus. Das geht nur bei Playlists, die dir gehören (oder bei denen du mitarbeitest). Falls es deine ist: einmal „Neu verbinden“.");
+    throw e;
+  }
+  if(!out.length) throw new Error("Die Playlist ist leer.");
+  songCache={uri,items:out}; return out;
+}
+async function openSongs(){
+  initAudio();
+  $("songPanel").classList.add("open");
+  $("btnBackWarm").style.display = mode==="group" ? "" : "none";
+  const list=$("songList"); list.innerHTML='<p class="small">Lieder werden geladen …</p>';
+  try{
+    const items=await loadSongs(); list.innerHTML="";
+    items.forEach(s=>{
+      const b=document.createElement("button"); b.className="song"+(played.has(s.uri)?" played":"");
+      b.innerHTML=`<span class="t"><span class="n"></span><span class="a"></span></span><span class="d">${fmt(s.dur)}</span>`;
+      b.querySelector(".n").textContent=s.name; b.querySelector(".a").textContent=s.artists;
+      b.onclick=()=>startGroupSong(s);
+      list.appendChild(b);
+    });
+  }catch(e){ list.innerHTML=""; const p=document.createElement("p"); p.className="small err"; p.textContent=e.message; list.appendChild(p); }
+}
+const closeSongs = () => $("songPanel").classList.remove("open");
+async function startGroupSong(s){
+  closeSongs(); saveSettings(); stopCircuitInternals();
+  if(mode!=="warm"&&mode!=="group") warmStart=Date.now();
+  const prevMode=mode, prevGroup=group;
+  clearTimeout(groupTimer);
+  group={...s, endAt:Date.now()+s.dur};
+  mode="group"; setButtons(); requestWake(); renderFree();
+  // Einwärm-Position merken, dann Lied abspielen
+  const ok=await playMusic(s.uri, volFor("group"), {single:true});
+  if(!ok){ mode=prevMode==="group"?"group":"warm"; group=prevGroup; if(mode==="group"&&group) scheduleGroupEnd(group.endAt-Date.now()); setButtons(); renderFree(); return; }
+  played.add(s.uri);
+  group.endAt=Date.now()+s.dur;
+  say("Gemeinsames Workout");
+  scheduleGroupEnd(s.dur-300);
+}
+function scheduleGroupEnd(ms){ clearTimeout(groupTimer); groupTimer=setTimeout(checkGroupEnd, Math.max(500,ms)); }
+async function checkGroupEnd(){
+  if(mode!=="group"||!group) return;
+  try{
+    const st=await api("GET","/me/player");
+    if(st&&st.item&&st.item.uri===group.uri){
+      const left=(st.item.duration_ms||group.dur)-(st.progress_ms||0);
+      if(st.is_playing && left>1500){ group.endAt=Date.now()+left; scheduleGroupEnd(left-300); return; }
+      if(!st.is_playing && (st.progress_ms||0)>0 && left>1500){ group.endAt=Date.now()+left; group.paused=true; scheduleGroupEnd(3000); return; }
+    }
+  }catch(e){}
+  endGroup();
+}
+async function endGroup(){
+  clearTimeout(groupTimer); group=null;
+  mode="warm"; setButtons(); renderFree(); closeSongs();
+  // curUri ist das Lied -> nicht merken, direkt Einwärm-Playlist an alter Stelle fortsetzen
+  curUri="__group__";
+  await applyPhase("warm");
+}
+
+/* ---------- Anzeige ausserhalb des Zirkels ---------- */
+const clock = ms => new Date(ms).toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"});
+function totalMs(){ const p=buildPlan(cfg()); return p.length?p[p.length-1].end:0; }
+function renderIdle(){
+  if(mode==="circuit") return;
+  if(mode==="idle"){ const t=$("total"); if(t) t.textContent=fmt(totalMs()); }
+  $("endtime").textContent="Zirkel-Ende bei Start jetzt: ca. "+clock(Date.now()+totalMs())+" Uhr";
+}
+function renderFree(){
+  const c=$("count");
+  if(mode==="warm"){
+    $("stage").style.background=COLOR.warm; $("phase").textContent=LABEL.warm;
+    c.className="clock"; c.textContent=fmt(Date.now()-warmStart);
+    $("where").textContent="Einwärmen läuft"; $("next").textContent="Danach: Gemeinsames Workout oder Zirkel";
+    $("music").textContent=musicFor("warm")?"♪ Einwärm-Playlist":""; $("bar").firstElementChild.style.width="0";
+  } else if(mode==="group" && group){
+    if(group.paused===true){ group.paused=false; }
+    $("stage").style.background=COLOR.group; $("phase").textContent=LABEL.group;
+    c.className="clock"; c.textContent=fmt(group.endAt-Date.now());
+    $("where").textContent=group.name; $("next").textContent="Danach: weiter mit Einwärm-Playlist";
+    $("music").textContent="♪ "+group.artists;
+    $("bar").firstElementChild.style.width=Math.min(100,100*(1-(group.endAt-Date.now())/group.dur)).toFixed(1)+"%";
+  } else if(mode==="cool"){
+    $("stage").style.background=COLOR.cool; $("phase").textContent=LABEL.cool;
+    c.className="clock"; c.textContent=fmt(Date.now()-coolStart);
+    $("where").textContent="Durchatmen, dehnen, geniessen 🌿"; $("next").textContent="";
+    $("music").textContent=musicFor("cool")?"♪ Entspannungs-Playlist":""; $("bar").firstElementChild.style.width="0";
+    $("endtime").textContent=""; return;
+  }
+  renderIdle();
+}
+setInterval(()=>{ if(mode==="warm"||mode==="group"||mode==="cool") renderFree(); else if(mode==="idle") renderIdle(); else if(mode==="circuit"&&paused) renderEnd(); },500);
+
+/* ---------- Zirkel ---------- */
 let plan=[], t0=0, pausedAt=0, running=false, paused=false, idx=-1, switchedFor=-1, lastSec=-1, raf=0, iv=0, wake=null;
 function now(){ return performance.now(); }
 function elapsed(){ return paused ? pausedAt-t0 : now()-t0; }
-function totalMs(){ const p=buildPlan(cfg()); return p.length?p[p.length-1].end:0; }
-const clock = ms => new Date(ms).toLocaleTimeString("de-CH",{hour:"2-digit",minute:"2-digit"});
-function renderIdle(){ if(running) return; $("total").textContent=fmt(totalMs()); $("endtime").textContent="Ende bei Start jetzt: ca. "+clock(Date.now()+totalMs())+" Uhr"; }
 function renderEnd(){ const rest=plan.length?plan[plan.length-1].end-elapsed():0; $("endtime").textContent=(paused?"Ende (wenn jetzt weiter): ":"Ende um ")+clock(Date.now()+rest)+" Uhr"; }
-setInterval(()=>{ if(!running) renderIdle(); else if(paused) renderEnd(); },15000);
 function whereText(ph,c){
   if(ph.type==="prep") return `Gleich geht's los · Posten 1 von ${c.stations}`;
   if(ph.type==="change") return `Zum nächsten Posten · ${ph.s} von ${c.stations}`;
@@ -287,10 +600,11 @@ function enterPhase(i){
   const c=cfg(), ph=plan[i];
   $("stage").style.background=COLOR[ph.type];
   $("phase").textContent=LABEL[ph.type];
+  $("count").className="";
   $("where").textContent=whereText(ph,c);
   const nx=plan[i+1]; $("next").textContent = nx ? `Danach: ${LABEL[nx.type]} (${nx.dur} s)` : "Danach: Fertig";
   $("music").textContent=musicName(ph.type);
-  if(switchedFor<i){ switchMusic(musicFor(ph.type)); switchedFor=i; }
+  if(switchedFor<i){ applyPhase(ph.type); switchedFor=i; }
   beep(ph.type==="work"?1320:660,.45,.8);
   if(ph.type==="prep") say("Vorbereitung");
   else if(ph.type==="change") say(`Wechseln. Posten ${ph.s} von ${c.stations}`);
@@ -298,12 +612,13 @@ function enterPhase(i){
   else if(ph.type==="work" && ph.r===c.rounds) say("Letzte Runde");
 }
 function finish(){
-  running=false; cancelAnimationFrame(raf); clearInterval(iv);
-  $("stage").style.background=COLOR.done; $("phase").textContent=LABEL.done; $("count").textContent="✔";
-  $("where").textContent=`Geschafft! ${fmt(totalMs())} Training`; $("next").textContent=""; $("music").textContent=""; $("endtime").textContent="Beendet um "+clock(Date.now())+" Uhr";
+  running=false; mode="done"; cancelAnimationFrame(raf); clearInterval(iv);
+  $("stage").style.background=COLOR.done; $("phase").textContent=LABEL.done; $("count").className=""; $("count").textContent="✔";
+  $("where").textContent=`Geschafft! ${fmt(totalMs())} Zirkel`; $("next").textContent=""; $("music").textContent="";
+  $("endtime").textContent="Beendet um "+clock(Date.now())+" Uhr";
   $("bar").firstElementChild.style.width="100%";
   beep(1320,.8,.8); say("Fertig. Super gemacht!");
-  switchMusic(musicFor("done"));
+  applyPhase("done");
   setButtons(); releaseWake();
 }
 function tick(){
@@ -316,46 +631,101 @@ function tick(){
   if(sec!==lastSec){ lastSec=sec; $("count").textContent=sec; renderEnd(); if(sec<=3&&sec>=1&&ph.dur>3) beep(880,.12,.6); }
   $("bar").firstElementChild.style.width=(100*(e-ph.start)/(ph.dur*1000)).toFixed(1)+"%";
   const nx=plan[idx+1];
-  if(nx && switchedFor<idx+1 && remain<=lead){ switchedFor=idx+1; switchMusic(musicFor(nx.type)); }
+  if(nx && switchedFor<idx+1 && remain<=lead){ switchedFor=idx+1; applyPhase(nx.type); }
   raf=requestAnimationFrame(tick);
 }
-async function requestWake(){ try{ if("wakeLock" in navigator) wake=await navigator.wakeLock.request("screen"); }catch(e){} }
-function releaseWake(){ try{ wake&&wake.release(); }catch(e){} wake=null; }
-document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"&&running) requestWake(); });
-function setButtons(){
-  $("btnStart").disabled=running; $("btnPause").disabled=!running; $("btnSkip").disabled=!running; $("btnStop").disabled=!running;
-  $("btnPause").textContent=paused?"Weiter":"Pause";
+/* Zeiten während des Zirkels ändern: Plan neu bauen, aktuelle Stelle behalten */
+function phaseKey(ph){
+  if(ph.type==="prep") return [0,0,0];
+  if(ph.type==="change") return [ph.s-1,1e9,2];
+  return [ph.s,ph.r,ph.type==="rest"?1:0];
 }
+function keyCmp(a,b){ for(let i=0;i<3;i++){ if(a[i]!==b[i]) return a[i]-b[i]; } return 0; }
+function replan(){
+  if(mode!=="circuit"||idx<0) return;
+  const e=elapsed(), old=plan[idx], inPh=e-old.start, k=phaseKey(old);
+  const np=buildPlan(cfg());
+  let j=np.findIndex(ph=>keyCmp(phaseKey(ph),k)>=0);
+  if(j<0){ plan=np; finish(); return; }
+  const exact = keyCmp(phaseKey(np[j]),k)===0;
+  const base = paused ? pausedAt : now();
+  plan=np;
+  if(exact){
+    t0 = base - (np[j].start + Math.min(inPh, np[j].dur*1000-1));
+    idx=j; switchedFor=j; lastSec=-1;
+    const c=cfg(), nx=plan[j+1];
+    $("where").textContent=whereText(plan[j],c);
+    $("next").textContent = nx ? `Danach: ${LABEL[nx.type]} (${nx.dur} s)` : "Danach: Fertig";
+  } else {
+    t0 = base - np[j].start;
+    idx=j-1; switchedFor=j-1; lastSec=-1;
+  }
+  renderEnd();
+  setStatus("Zeiten angepasst ✔ – "+$("endtime").textContent,"ok");
+  if(!paused){ cancelAnimationFrame(raf); tick(); }
+}
+
+async function requestWake(){ try{ if("wakeLock" in navigator && !wake) wake=await navigator.wakeLock.request("screen"); }catch(e){} }
+function releaseWake(){ try{ wake&&wake.release(); }catch(e){} wake=null; }
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"&&mode!=="idle"&&mode!=="done"){ wake=null; requestWake(); } });
+function setButtons(){
+  const circ=mode==="circuit";
+  $("btnWarm").disabled = circ || mode==="warm" || mode==="group";
+  $("btnCool").disabled = mode==="cool";
+  $("btnGroup").disabled = circ;
+  $("btnStart").disabled = circ;
+  $("btnPause").disabled = !circ; $("btnSkip").disabled = !circ;
+  $("btnStop").disabled = mode==="idle";
+  $("btnPause").textContent = paused ? "Weiter" : "Pause";
+}
+function stopCircuitInternals(){ running=false; paused=false; cancelAnimationFrame(raf); clearInterval(iv); }
 function start(){
-  saveSettings();
-  try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume(); }catch(e){}
-  plan=buildPlan(cfg()); idx=-1; switchedFor=-1; curUri=""; shuffleSet=false; for(const k in mem) delete mem[k];
-  t0=now(); running=true; paused=false; setButtons(); requestWake();
+  saveSettings(); initAudio();
+  clearTimeout(groupTimer); group=null; closeSongs();
+  plan=buildPlan(cfg()); idx=-1; switchedFor=-1; shuffleSet=false;
+  if(curUri==="__group__") curUri="";
+  t0=now(); running=true; paused=false; mode="circuit"; setButtons(); requestWake();
   raf=requestAnimationFrame(tick); clearInterval(iv); iv=setInterval(()=>{ cancelAnimationFrame(raf); tick(); },250);
 }
 async function togglePause(){
-  if(!running) return;
-  const dev=$("device").value, q=dev?"?device_id="+encodeURIComponent(dev):"";
-  if(!paused){ paused=true; pausedAt=now(); $("phase").textContent="⏸ Pausiert"; if(connected()&&curUri){ try{ await api("PUT","/me/player/pause"+q);}catch(e){} } }
-  else { t0+=now()-pausedAt; paused=false; $("phase").textContent=LABEL[plan[idx].type]; if(connected()&&curUri){ try{ await api("PUT","/me/player/play"+q);}catch(e){} } raf=requestAnimationFrame(tick); }
+  if(mode!=="circuit") return;
+  if(!paused){ paused=true; pausedAt=now(); $("phase").textContent="⏸ Pausiert";
+    if(isYT(curUri)){ try{ ytPlayer.pauseVideo(); }catch(e){} }
+    else if(connected()&&curUri){ try{ await api("PUT","/me/player/pause"+devQ());}catch(e){} } }
+  else { t0+=now()-pausedAt; paused=false; $("phase").textContent=LABEL[plan[idx].type];
+    if(isYT(curUri)){ try{ ytPlayer.playVideo(); }catch(e){} }
+    else if(connected()&&curUri){ try{ await api("PUT","/me/player/play"+devQ());}catch(e){} }
+    raf=requestAnimationFrame(tick); }
   setButtons(); renderEnd();
 }
-function skip(){ if(!running||idx<0) return; const e=elapsed(); const ph=plan[idx]; t0-=ph.end-e; if(paused){ pausedAt=now(); } if(switchedFor<idx+1) switchedFor=idx; tick(); }
+function skip(){ if(mode!=="circuit"||idx<0) return; const e=elapsed(); const ph=plan[idx]; t0-=ph.end-e; if(paused){ pausedAt=now(); } tick(); }
 async function stop(){
-  running=false; paused=false; cancelAnimationFrame(raf); clearInterval(iv); releaseWake();
-  $("stage").style.background=COLOR.prep; $("phase").textContent="Bereit"; $("count").textContent="--";
-  $("where").innerHTML='Gesamtdauer: <span id="total"></span>'; $("next").textContent=""; $("music").textContent=""; $("bar").firstElementChild.style.width="0";
+  stopCircuitInternals(); clearTimeout(groupTimer); group=null; closeSongs(); releaseWake();
+  mode="idle";
+  $("stage").style.background=COLOR.prep; $("phase").textContent="Bereit"; $("count").className=""; $("count").textContent="--";
+  $("where").innerHTML='Zirkel-Dauer: <span id="total"></span>'; $("next").textContent=""; $("music").textContent=""; $("bar").firstElementChild.style.width="0";
   renderIdle(); setButtons();
-  if(connected()&&curUri){ const dev=$("device").value; try{ await api("PUT","/me/player/pause"+(dev?"?device_id="+encodeURIComponent(dev):"")); }catch(e){} curUri=""; }
+  ytPause();
+  if(connected()&&curUri&&!isYT(curUri)){ spActive=true; await pauseSpotify(); }
+  curUri=""; spActive=false; for(const k in mem) delete mem[k]; played.clear();
 }
 
 /* ---------- Init ---------- */
 loadSettings();
 $("redir").textContent=redirectUri;
 for(const f of FIELDS) $(f).addEventListener("change",saveSettings);
+for(const id of ["prep","stations","rounds","work","rest","change"]) $(id).addEventListener("change",replan);
+for(const id of LINK_FIELDS) $(id).addEventListener("input",()=>{ checkFields(); saveSettings(); });
+$("device").addEventListener("change",()=>{ volBlocked=false; curVol=null; renderVolHint(); });
+for(const id of ["vWork","vRest","vChange","vWarm"]) $(id).addEventListener("change",()=>{ curVol=null; });
+checkFields();
+if(needYT()) loadYT();
+for(const id of LINK_FIELDS) $(id).addEventListener("change",()=>{ if(needYT()) loadYT(); });
+$("btnWarm").onclick=startWarm; $("btnCool").onclick=startCool; $("btnGroup").onclick=openSongs;
+$("btnClosePanel").onclick=closeSongs; $("btnBackWarm").onclick=endGroup;
 $("btnStart").onclick=start; $("btnPause").onclick=togglePause; $("btnSkip").onclick=skip; $("btnStop").onclick=stop;
 $("btnConnect").onclick=connect; $("btnDevices").onclick=loadDevices;
-$("btnTest").onclick=async()=>{ saveSettings(); const u=musicFor("work"); if(!u){ setStatus("Kein gültiger Link bei Trainingsmusik.","err"); return; } curUri=""; await switchMusic(u); if(curUri) setStatus("Trainingsmusik läuft ✔","ok"); };
+$("btnTest").onclick=async()=>{ saveSettings(); initAudio(); const u=musicFor("work"); if(!u){ setStatus("Trainingsmusik: "+linkProblem($("mWork").value),"err"); return; } if(curUri===u){ curUri=""; } if(await playMusic(u,volFor("work"))) setStatus("Trainingsmusik läuft ✔","ok"); };
 renderIdle(); renderSpState(); setButtons();
 handleRedirect().then(()=>{ if(connected()) loadDevices(); });
 </script>
