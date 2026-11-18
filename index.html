@@ -90,7 +90,8 @@
   <details open>
     <summary>Zeiten</summary>
     <div class="grid">
-      <label>Vorbereitung (s)<input id="prep" type="number" min="0" value="60"></label>
+      <label>Vorbereitung Zirkel (s)<input id="prep" type="number" min="0" value="60"></label>
+      <label>Vorbereitung gem. Workout (s)<input id="gPrep" type="number" min="0" value="10"></label>
       <label>Posten<input id="stations" type="number" min="1" value="5"></label>
       <label>Runden pro Posten<input id="rounds" type="number" min="1" value="8"></label>
       <label>Arbeit / ON (s)<input id="work" type="number" min="1" value="20"></label>
@@ -135,7 +136,15 @@
   <details>
     <summary>Signale</summary>
     <label class="chk"><input id="beeps" type="checkbox" checked> Piepser 3-2-1 vor jedem Phasenwechsel</label>
-    <label class="chk"><input id="voice" type="checkbox" checked> Sprachansage (Wechsel, Posten, Fertig)</label>
+    <div class="small" style="margin-top:12px;color:var(--txt);font-weight:600">Sprachansagen</div>
+    <label class="chk"><input id="sayWarm" type="checkbox" checked> 🟠 Einwärmen („Einwärmen“)</label>
+    <label class="chk"><input id="sayGroup" type="checkbox" checked> 💪 Gemeinsames Workout („Gleich gemeinsames Workout …“)</label>
+    <label class="chk"><input id="sayPrep" type="checkbox" checked> ⏳ Vorbereitung Zirkel („Vorbereitung“)</label>
+    <label class="chk"><input id="sayWork" type="checkbox" checked> 🔥 Arbeit / ON („Los“, „Letzte Runde“)</label>
+    <label class="chk"><input id="sayRest" type="checkbox" checked> 😮‍💨 Pause / OFF („Pause“)</label>
+    <label class="chk"><input id="sayChange" type="checkbox" checked> 🔄 Postenwechsel („Wechseln, Posten 2 von 5“)</label>
+    <label class="chk"><input id="sayDone" type="checkbox" checked> 🎉 Zirkel fertig („Fertig, super gemacht“)</label>
+    <label class="chk"><input id="sayCool" type="checkbox" checked> 🌿 Schluss („Zeit zum Entspannen“)</label>
     <p class="small">⚠️ Läuft Spotify auf <b>demselben iPhone</b>, unterbrechen Töne aus dem Browser die Spotify-Wiedergabe. Dann Signale ausschalten – oder (besser) Spotify auf einem Lautsprecher/Laptop abspielen und das Handy nur als Fernbedienung nutzen.</p>
   </details>
 
@@ -177,7 +186,7 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const FIELDS = ["prep","stations","rounds","work","rest","change","mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool","endMode","resume","shuffle","lead","vWork","vRest","vChange","vWarm","vCool","beeps","voice","clientId","device","spOut"];
+const FIELDS = ["prep","stations","rounds","work","rest","change","mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool","endMode","resume","shuffle","lead","vWork","vRest","vChange","vWarm","vCool","beeps","sayWarm","sayGroup","sayPrep","sayWork","sayRest","sayChange","sayDone","sayCool","gPrep","clientId","device","spOut"];
 const LINK_FIELDS = ["mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool"];
 const store = {
   get(k){ try{ return localStorage.getItem("hiit_"+k); }catch(e){ return null; } },
@@ -260,8 +269,9 @@ function beep(freq=880,dur=.15,vol=.5){
   o.connect(g); g.connect(actx.destination);
   const t=actx.currentTime; o.start(t); g.gain.setValueAtTime(vol*.3,t); g.gain.exponentialRampToValueAtTime(.0001,t+dur); o.stop(t+dur+.02);
 }
-function say(text){
-  if(!$("voice").checked||!("speechSynthesis" in window)) return;
+function say(text,kind){
+  if(kind && $("say"+kind) && !$("say"+kind).checked) return;
+  if(!("speechSynthesis" in window)) return;
   try{ const u=new SpeechSynthesisUtterance(text); u.lang="de-DE"; u.rate=1.05; speechSynthesis.cancel(); speechSynthesis.speak(u);}catch(e){}
 }
 
@@ -536,9 +546,11 @@ let warmStart=0, coolStart=0, group=null, groupTimer=0;
 /* ---------- Einwärmen ---------- */
 async function startWarm(){
   saveSettings(); initAudio(); stopCircuitInternals();
-  if(mode!=="warm"&&mode!=="group") warmStart=Date.now();
+  const fresh = mode!=="warm"&&mode!=="group"&&mode!=="gprep";
+  if(fresh) warmStart=Date.now();
   clearTimeout(groupTimer); group=null;
   mode="warm"; setButtons(); requestWake(); renderFree();
+  if(fresh) say("Einwärmen","Warm");
   if(!musicFor("warm")) setStatus("Tipp: Unter „Musik“ eine Einwärm-Playlist eintragen.","");
   await applyPhase("warm");
 }
@@ -550,7 +562,7 @@ async function startCool(){
   if(curUri==="__group__") curUri="";
   coolStart=Date.now(); mode="cool"; setButtons(); requestWake(); renderFree();
   if(!musicFor("cool")) setStatus("Tipp: Unter „Musik“ eine Entspannungs-Playlist eintragen.","");
-  say("Schluss. Zeit zum Entspannen");
+  say("Schluss. Zeit zum Entspannen","Cool");
   await applyPhase("cool");
 }
 
@@ -579,7 +591,7 @@ async function loadSongs(){
 async function openSongs(){
   initAudio();
   $("songPanel").classList.add("open");
-  $("btnBackWarm").style.display = mode==="group" ? "" : "none";
+  $("btnBackWarm").style.display = (mode==="group"||mode==="gprep") ? "" : "none";
   const list=$("songList"); list.innerHTML='<p class="small">Lieder werden geladen …</p>';
   try{
     const items=await loadSongs(); list.innerHTML="";
@@ -595,17 +607,29 @@ async function openSongs(){
 const closeSongs = () => $("songPanel").classList.remove("open");
 async function startGroupSong(s){
   closeSongs(); saveSettings(); stopCircuitInternals();
-  if(mode!=="warm"&&mode!=="group") warmStart=Date.now();
-  const prevMode=mode, prevGroup=group;
+  if(mode!=="warm"&&mode!=="group"&&mode!=="gprep") warmStart=Date.now();
+  clearTimeout(groupTimer);
+  const pre=num("gPrep")*1000;
+  if(pre<=0){ say("Gemeinsames Workout","Group"); return playGroupSong(s); }
+  // Vorbereitung: Einwärm-Musik läuft (weiter), Countdown, dann startet das Lied
+  if(mode==="group"){ curUri="__group__"; applyPhase("warm"); }
+  const token={...s, startAt:Date.now()+pre, pre};
+  group=token; mode="gprep"; setButtons(); requestWake(); renderFree();
+  say(`Gleich gemeinsames Workout: ${s.name}`,"Group");
+  for(const k of [3,2,1]) if(pre>k*1000) setTimeout(()=>{ if(mode==="gprep"&&group===token) beep(880,.12,.6); }, pre-k*1000);
+  groupTimer=setTimeout(()=>{ if(mode==="gprep"&&group===token) playGroupSong(s); }, pre);
+}
+async function playGroupSong(s){
+  const prevMode = mode==="gprep" ? "warm" : mode, prevGroup = mode==="group" ? group : null;
   clearTimeout(groupTimer);
   group={...s, endAt:Date.now()+s.dur};
   mode="group"; setButtons(); requestWake(); renderFree();
+  beep(1320,.45,.8);
   // Einwärm-Position merken, dann Lied abspielen
   const ok=await playMusic(s.uri, volFor("group"), {single:true});
-  if(!ok){ mode=prevMode==="group"?"group":"warm"; group=prevGroup; if(mode==="group"&&group) scheduleGroupEnd(group.endAt-Date.now()); setButtons(); renderFree(); return; }
+  if(!ok){ mode=prevMode==="group"&&prevGroup?"group":"warm"; group=prevGroup; if(mode==="group"&&group) scheduleGroupEnd(group.endAt-Date.now()); setButtons(); renderFree(); return; }
   played.add(s.uri);
   group.endAt=Date.now()+s.dur;
-  say("Gemeinsames Workout");
   scheduleGroupEnd(s.dur-300);
 }
 function scheduleGroupEnd(ms){ clearTimeout(groupTimer); groupTimer=setTimeout(checkGroupEnd, Math.max(500,ms)); }
@@ -622,6 +646,7 @@ async function checkGroupEnd(){
   endGroup();
 }
 async function endGroup(){
+  if(mode==="gprep"){ clearTimeout(groupTimer); group=null; mode="warm"; setButtons(); renderFree(); closeSongs(); return; }
   clearTimeout(groupTimer); group=null;
   mode="warm"; setButtons(); renderFree(); closeSongs();
   // curUri ist das Lied -> nicht merken, direkt Einwärm-Playlist an alter Stelle fortsetzen
@@ -651,6 +676,13 @@ function renderFree(){
     $("where").textContent=group.name; $("next").textContent="Danach: weiter mit Einwärm-Playlist";
     $("music").textContent="♪ "+group.artists;
     $("bar").firstElementChild.style.width=Math.min(100,100*(1-(group.endAt-Date.now())/group.dur)).toFixed(1)+"%";
+  } else if(mode==="gprep" && group){
+    const left=group.startAt-Date.now();
+    $("stage").style.background=COLOR.group; $("phase").textContent="Gleich: Gemeinsames Workout";
+    c.className=""; c.textContent=Math.max(0,Math.ceil(left/1000));
+    $("where").textContent=group.name; $("next").textContent="Vorbereiten – Einwärm-Musik läuft noch";
+    $("music").textContent="♪ "+group.artists;
+    $("bar").firstElementChild.style.width=Math.min(100,100*(1-left/group.pre)).toFixed(1)+"%";
   } else if(mode==="cool"){
     $("stage").style.background=COLOR.cool; $("phase").textContent=LABEL.cool;
     c.className="clock"; c.textContent=fmt(Date.now()-coolStart);
@@ -660,7 +692,7 @@ function renderFree(){
   }
   renderIdle();
 }
-setInterval(()=>{ if(mode==="warm"||mode==="group"||mode==="cool") renderFree(); else if(mode==="idle") renderIdle(); else if(mode==="circuit"&&paused) renderEnd(); },500);
+setInterval(()=>{ if(mode==="warm"||mode==="group"||mode==="gprep"||mode==="cool") renderFree(); else if(mode==="idle") renderIdle(); else if(mode==="circuit"&&paused) renderEnd(); },500);
 
 /* ---------- Zirkel ---------- */
 let plan=[], t0=0, pausedAt=0, running=false, paused=false, idx=-1, switchedFor=-1, lastSec=-1, raf=0, iv=0, wake=null;
@@ -683,10 +715,12 @@ function enterPhase(i){
   $("music").textContent=musicName(ph.type);
   if(switchedFor<i){ applyPhase(ph.type); switchedFor=i; }
   beep(ph.type==="work"?1320:660,.45,.8);
-  if(ph.type==="prep") say("Vorbereitung");
-  else if(ph.type==="change") say(`Wechseln. Posten ${ph.s} von ${c.stations}`);
-  else if(ph.type==="work" && ph.r===1) say(`Posten ${ph.s}. Los`);
-  else if(ph.type==="work" && ph.r===c.rounds) say("Letzte Runde");
+  if(ph.type==="prep") say("Vorbereitung","Prep");
+  else if(ph.type==="change") say(`Wechseln. Posten ${ph.s} von ${c.stations}`,"Change");
+  else if(ph.type==="rest") say("Pause","Rest");
+  else if(ph.type==="work" && ph.r===1) say(`Posten ${ph.s}. Los`,"Work");
+  else if(ph.type==="work" && ph.r===c.rounds) say("Letzte Runde. Los","Work");
+  else if(ph.type==="work") say("Los","Work");
 }
 function finish(){
   running=false; mode="done"; cancelAnimationFrame(raf); clearInterval(iv);
@@ -694,7 +728,7 @@ function finish(){
   $("where").textContent=`Geschafft! ${fmt(totalMs())} Zirkel`; $("next").textContent=""; $("music").textContent="";
   $("endtime").textContent="Beendet um "+clock(Date.now())+" Uhr";
   $("bar").firstElementChild.style.width="100%";
-  beep(1320,.8,.8); say("Fertig. Super gemacht!");
+  beep(1320,.8,.8); say("Fertig. Super gemacht!","Done");
   applyPhase("done");
   setButtons(); releaseWake();
 }
@@ -748,7 +782,7 @@ function releaseWake(){ try{ wake&&wake.release(); }catch(e){} wake=null; }
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible"&&mode!=="idle"&&mode!=="done"){ wake=null; requestWake(); } });
 function setButtons(){
   const circ=mode==="circuit";
-  $("btnWarm").disabled = circ || mode==="warm" || mode==="group";
+  $("btnWarm").disabled = circ || mode==="warm" || mode==="group" || mode==="gprep";
   $("btnCool").disabled = mode==="cool";
   $("btnGroup").disabled = circ;
   $("btnStart").disabled = circ;
@@ -799,6 +833,7 @@ const VOL_IDS=["vWork","vRest","vChange","vWarm","vCool"];
 const VOL_OF={cool:"vCool",warm:"vWarm",group:"vWarm",work:"vWork",rest:"vRest",change:"vChange",prep:"vChange",done:"vRest"};
 function activeType(){
   if(mode==="circuit") return plan[idx]?plan[idx].type:null;
+  if(mode==="gprep") return "warm";
   if(mode==="warm"||mode==="group"||mode==="cool") return mode;
   if(mode==="done") return "done";
   return null;
