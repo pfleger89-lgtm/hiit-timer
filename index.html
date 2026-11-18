@@ -79,6 +79,7 @@
   </div>
   <div class="row">
     <button id="btnCool" class="cool">Schluss</button>
+    <button id="btnNext">⏭ Nächstes Lied</button>
   </div>
   <div class="row">
     <button id="btnSkip" disabled>Phase überspringen</button>
@@ -555,6 +556,28 @@ async function startWarm(){
   await applyPhase("warm");
 }
 
+/* ---------- Nächstes Lied ---------- */
+async function nextTrack(){
+  initAudio();
+  if(mode==="group"){ setStatus("Lied übersprungen – weiter mit Einwärm-Musik.","ok"); return endGroup(); }
+  if(isYT(curUri)){
+    const o=ytCur();
+    if(o && !o.single){ try{ o.player.nextVideo(); setStatus("⏭ Nächstes Video","ok"); }catch(e){} }
+    else setStatus("Das ist ein einzelnes YouTube-Video – weiterspringen geht nur bei einer YouTube-Playlist.","err");
+    return;
+  }
+  if(isSp(curUri) && connected()){
+    try{
+      if(useWeb() && wp && wpDevice) await wp.nextTrack();
+      else await api("POST","/me/player/next"+devQ());
+      delete mem[curUri];
+      setStatus("⏭ Nächstes Lied","ok");
+    }catch(e){ setStatus(e.message,"err"); }
+    return;
+  }
+  setStatus("Gerade läuft keine Musik vom Timer.","err");
+}
+
 /* ---------- Schluss ---------- */
 async function startCool(){
   saveSettings(); initAudio(); stopCircuitInternals();
@@ -784,6 +807,7 @@ function setButtons(){
   const circ=mode==="circuit";
   $("btnWarm").disabled = circ || mode==="warm" || mode==="group" || mode==="gprep";
   $("btnCool").disabled = mode==="cool";
+  $("btnNext").disabled = mode==="idle";
   $("btnGroup").disabled = circ;
   $("btnStart").disabled = circ;
   $("btnPause").disabled = !circ; $("btnSkip").disabled = !circ;
@@ -855,7 +879,7 @@ checkFields();
 if(needYT()) loadYT();
 for(const id of LINK_FIELDS) $(id).addEventListener("change",()=>{ if(needYT()) loadYT(); else if(ytApiReady) ensurePlayers(); });
 $("btnYtPrime").onclick=()=>{ for(const o of Object.values(yt)) if(o.primed&&ytCurKey!==o.key){ o.primed=false; } primeYT(); };
-$("btnWarm").onclick=startWarm; $("btnCool").onclick=startCool; $("btnGroup").onclick=openSongs;
+$("btnWarm").onclick=startWarm; $("btnNext").onclick=nextTrack; $("btnCool").onclick=startCool; $("btnGroup").onclick=openSongs;
 $("btnClosePanel").onclick=closeSongs; $("btnBackWarm").onclick=endGroup;
 $("btnStart").onclick=start; $("btnPause").onclick=togglePause; $("btnSkip").onclick=skip; $("btnStop").onclick=stop;
 $("btnConnect").onclick=connect; $("btnDevices").onclick=loadDevices;
