@@ -36,6 +36,10 @@
   #status{font-size:13px;margin-top:10px;color:var(--mut);min-height:18px}
   .ok{color:#1db954!important}.err{color:#ff6b5a!important}
   ol{padding-left:20px}
+  #ytStack{position:relative;height:200px;border-radius:10px;overflow:hidden;background:#000}
+  .ytSlot{position:absolute;inset:0;z-index:1}
+  .ytSlot.front{z-index:2}
+  .ytSlot iframe{width:100%;height:200px}
   input[type=range]{padding:0;height:34px;accent-color:#1db954;border:0;background:none}
   .vv{color:var(--txt)}
   .vv.live{color:#1db954}
@@ -81,7 +85,7 @@
     <button id="btnStop" disabled>Stopp</button>
   </div>
   <div id="status"></div>
-  <div id="ytBox" style="display:none;margin-top:14px"><div class="small" style="margin-bottom:6px">▶️ YouTube-Player</div><div id="ytPlayer"></div></div>
+  <div id="ytBox" style="display:none;margin-top:14px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><div id="ytInfo" class="small" style="flex:1"></div><button id="btnYtPrime" style="flex:0 0 auto;padding:8px 12px;font-size:14px">Vorladen</button></div><div id="ytStack"></div></div>
 
   <details open>
     <summary>Zeiten</summary>
@@ -404,56 +408,82 @@ function parseYT(s){
   const v=mv?mv[1]:"", list=ml?ml[1]:"";
   return (v||list)?{v,list,key:"yt:"+v+"|"+list}:null;
 }
-let ytPlayer=null, ytReady=false, ytActive=false, ytPrimed=false, ytSingle=false, ytWant=null;
-const needYT = () => LINK_FIELDS.some(id=>parseYT($(id).value));
+/* Für jeden YouTube-Link ein eigener Player, der vorab stumm puffert -> Wechsel ohne Ladezeit */
+const yt={}; let ytApiReady=false, ytCurKey=null, ytWantPrime=false, ytVolume={};
+const ytKeys = () => [...new Set(LINK_FIELDS.map(id=>parseYT($(id).value)).filter(Boolean).map(y=>y.key))];
+const needYT = () => ytKeys().length>0;
+const ytCur = () => ytCurKey ? yt[ytCurKey] : null;
 function loadYT(){
-  if(ytPlayer||$("ytApi")) return;
   $("ytBox").style.display="";
+  if(ytApiReady){ ensurePlayers(); return; }
+  if($("ytApi")) return;
   const sc=document.createElement("script"); sc.id="ytApi"; sc.src="https://www.youtube.com/iframe_api";
   sc.onerror=()=>setStatus("YouTube konnte nicht geladen werden (Internet?).","err");
   document.head.appendChild(sc);
 }
-window.onYouTubeIframeAPIReady=()=>{
-  const first=LINK_FIELDS.map(id=>parseYT($(id).value)).find(Boolean)||{};
-  const pv={playsinline:1,rel:0};
-  if(!first.v && first.list){ pv.listType="playlist"; pv.list=first.list; }
-  ytPlayer=new YT.Player("ytPlayer",{height:"200",width:"100%",videoId:first.v||undefined,playerVars:pv,events:{
-    onReady:()=>{ ytReady=true; if(ytWant){ const k=ytWant; ytWant=null; ytPlay(k); ytVol(pendingYtVol); } },
-    onStateChange:e=>{
-      if(e.data===0 && ytActive){ // Ende -> von vorne
-        if(ytSingle){ ytPlayer.seekTo(0); ytPlayer.playVideo(); } else ytPlayer.playVideoAt(0);
-      }
-    },
-    onError:e=>{
-      const msg={2:"YouTube-Link ungültig.",5:"YouTube-Video kann hier nicht abgespielt werden.",100:"YouTube-Video nicht gefunden (gelöscht/privat).",101:"Dieses YouTube-Video darf nicht in anderen Seiten abgespielt werden – bitte ein anderes wählen.",150:"Dieses YouTube-Video darf nicht in anderen Seiten abgespielt werden – bitte ein anderes wählen."}[e.data]||("YouTube-Fehler "+e.data);
-      setStatus(msg,"err");
-    }}});
-};
-function ytPlay(key){
+window.onYouTubeIframeAPIReady=()=>{ ytApiReady=true; ensurePlayers(); };
+function ensurePlayers(){
+  const keys=ytKeys();
+  for(const k of Object.keys(yt)) if(!keys.includes(k) && k!==ytCurKey){ try{ yt[k].player.destroy(); }catch(e){} yt[k].holder.remove(); delete yt[k]; }
+  for(const k of keys) if(!yt[k]) createPlayer(k);
+  updateYtInfo();
+}
+const YT_ERR={2:"YouTube-Link ungültig.",5:"YouTube-Video kann hier nicht abgespielt werden.",100:"YouTube-Video nicht gefunden (gelöscht/privat).",101:"Dieses YouTube-Video darf nicht in anderen Seiten abgespielt werden – bitte ein anderes wählen.",150:"Dieses YouTube-Video darf nicht in anderen Seiten abgespielt werden – bitte ein anderes wählen."};
+function createPlayer(key){
   const [v,list]=key.slice(3).split("|");
-  ytPrimed=true; ytActive=true; ytSingle=!list;
-  if(!ytReady){ ytWant=key; loadYT(); return; }
-  const m=$("resume").checked?mem[key]:null;
+  const holder=document.createElement("div"); holder.className="ytSlot"; const div=document.createElement("div"); holder.appendChild(div); $("ytStack").appendChild(holder);
+  const pv={playsinline:1,rel:0,controls:1}; if(list){ pv.listType="playlist"; pv.list=list; }
+  const o={key,holder,single:!list,ready:false,primed:false,priming:false,want:false,err:null};
+  o.player=new YT.Player(div,{width:"100%",height:"200",videoId:v||undefined,playerVars:pv,events:{
+    onReady:()=>{ o.ready=true; if(o.want) ytStart(o); else if(ytWantPrime) primeOne(o); updateYtInfo(); },
+    onStateChange:e=>{
+      if(e.data===1 && o.priming && !o.want){
+        // läuft stumm -> noch kurz puffern, dann anhalten und bereit sein
+        setTimeout(()=>{ if(o.priming && !o.want){ try{ o.player.pauseVideo(); if(o.single||!$("resume").checked) o.player.seekTo(0,true); o.player.unMute(); }catch(err){} o.priming=false; o.primed=true; updateYtInfo(); } },2500);
+      }
+      if(e.data===0 && ytCurKey===key){ try{ if(o.single){ o.player.seekTo(0,true); o.player.playVideo(); } else o.player.playVideoAt(0); }catch(err){} }
+    },
+    onError:e=>{ o.err=YT_ERR[e.data]||("YouTube-Fehler "+e.data); setStatus(o.err,"err"); updateYtInfo(); }
+  }});
+  yt[key]=o;
+}
+function updateYtInfo(){
+  const all=Object.values(yt); if(!all.length){ $("ytInfo").textContent=""; return; }
+  const ok=all.filter(o=>o.primed||ytCurKey===o.key).length, bad=all.filter(o=>o.err).length;
+  $("ytInfo").textContent = bad ? `⚠️ ${bad} YouTube-Link(s) mit Problem` : ok===all.length ? `✔ YouTube bereit (${ok}/${all.length} vorgeladen)` : `YouTube: ${ok}/${all.length} vorgeladen – tippe „Vorladen“ oder einen Start-Button`;
+  $("ytInfo").className = "small "+(bad?"err":ok===all.length?"ok":"");
+  for(const o of all) o.holder.classList.toggle("front", o.key===ytCurKey);
+}
+function primeOne(o){
+  if(!o.ready||o.primed||o.priming||o.want||o.err) return;
+  o.priming=true;
+  try{ o.player.mute(); o.player.playVideo(); }catch(e){ o.priming=false; }
+}
+/* Beim Antippen eines Buttons alle Videos stumm vorladen (Handy erlaubt Ton nur nach Antippen) */
+function primeYT(){
+  if(!needYT()) return; loadYT(); ytWantPrime=true;
+  for(const o of Object.values(yt)) primeOne(o);
+}
+function ytStart(o){
+  o.want=true; ytCurKey=o.key; updateYtInfo();
+  if(!o.ready) return; // startet in onReady
   try{
-    if(list){ ytPlayer.loadPlaylist({list,listType:"playlist",index:m?m.index:0,startSeconds:m?m.time:0}); if($("shuffle").checked) setTimeout(()=>{ try{ ytPlayer.setShuffle(true); }catch(e){} },800); }
-    else ytPlayer.loadVideoById({videoId:v,startSeconds:m?m.time:0});
-    ytPlayer.unMute();
+    const wasPriming=o.priming; o.priming=false; o.primed=true;
+    if(!$("resume").checked && !wasPriming) o.player.seekTo(0,true);
+    if(ytVolume[o.key]!=null) o.player.setVolume(ytVolume[o.key]);
+    o.player.unMute(); o.player.playVideo();
   }catch(e){ setStatus("YouTube-Fehler: "+e.message,"err"); }
 }
-function rememberYT(key){
-  if(!ytReady||!ytActive||!$("resume").checked) return;
-  try{ mem[key]={index:ytPlayer.getPlaylistIndex()>0?ytPlayer.getPlaylistIndex():0,time:ytPlayer.getCurrentTime()||0}; }catch(e){}
+function ytPlay(key){
+  if(!yt[key]){ loadYT(); if(!ytApiReady){ ytCurKey=key; setTimeout(()=>{ if(yt[key]&&ytCurKey===key) ytStart(yt[key]); },1500); return; } }
+  const prev=ytCur(); if(prev && prev.key!==key) ytStop(prev);
+  if(yt[key]) ytStart(yt[key]);
 }
-function ytPause(){ ytActive=false; try{ ytReady&&ytPlayer.pauseVideo(); }catch(e){} }
-let pendingYtVol=null;
-function ytVol(v){ if(v===null) return; pendingYtVol=v; try{ ytReady&&ytPlayer.setVolume(v); }catch(e){} }
-/* Beim ersten Antippen kurz stumm anspielen, damit das Handy spätere Starts erlaubt */
-function primeYT(){
-  if(!needYT()) return; loadYT();
-  if(!ytReady||ytPrimed) return;
-  ytPrimed=true;
-  try{ ytPlayer.mute(); ytPlayer.playVideo(); setTimeout(()=>{ try{ if(!ytActive) ytPlayer.pauseVideo(); ytPlayer.unMute(); }catch(e){} },600); }catch(e){}
-}
+function ytStop(o){ o.want=false; try{ o.player.pauseVideo(); }catch(e){} }
+function rememberYT(){ /* Position bleibt im jeweiligen Player erhalten */ }
+function ytPause(){ const o=ytCur(); if(o) ytStop(o); ytCurKey=null; updateYtInfo(); }
+function ytVol(v){ if(v===null) return; const o=ytCur(); if(!o) return; ytVolume[o.key]=v; try{ o.player.setVolume(v); }catch(e){} }
+function ytResetAll(){ for(const o of Object.values(yt)){ o.want=false; try{ o.player.pauseVideo(); o.player.seekTo(0,true); }catch(e){} } ytCurKey=null; updateYtInfo(); }
 
 /* ---------- Modus ---------- */
 let mode="idle"; // idle | warm | group | circuit | done
@@ -634,7 +664,8 @@ function tick(){
   if(sec!==lastSec){ lastSec=sec; $("count").textContent=sec; renderEnd(); if(sec<=3&&sec>=1&&ph.dur>3) beep(880,.12,.6); }
   $("bar").firstElementChild.style.width=(100*(e-ph.start)/(ph.dur*1000)).toFixed(1)+"%";
   const nx=plan[idx+1];
-  if(nx && switchedFor<idx+1 && remain<=lead){ switchedFor=idx+1; applyPhase(nx.type); }
+  const nxLead = isYT(musicFor(nx?nx.type:"")) ? 80 : lead;
+  if(nx && switchedFor<idx+1 && remain<=nxLead){ switchedFor=idx+1; applyPhase(nx.type); }
   raf=requestAnimationFrame(tick);
 }
 /* Zeiten während des Zirkels ändern: Plan neu bauen, aktuelle Stelle behalten */
@@ -693,10 +724,10 @@ function start(){
 async function togglePause(){
   if(mode!=="circuit") return;
   if(!paused){ paused=true; pausedAt=now(); $("phase").textContent="⏸ Pausiert";
-    if(isYT(curUri)){ try{ ytPlayer.pauseVideo(); }catch(e){} }
+    if(isYT(curUri)){ const o=ytCur(); if(o){ try{ o.player.pauseVideo(); }catch(e){} } }
     else if(connected()&&curUri){ try{ await api("PUT","/me/player/pause"+devQ());}catch(e){} } }
   else { t0+=now()-pausedAt; paused=false; $("phase").textContent=LABEL[plan[idx].type];
-    if(isYT(curUri)){ try{ ytPlayer.playVideo(); }catch(e){} }
+    if(isYT(curUri)){ const o=ytCur(); if(o){ try{ o.player.playVideo(); }catch(e){} } }
     else if(connected()&&curUri){ try{ await api("PUT","/me/player/play"+devQ());}catch(e){} }
     raf=requestAnimationFrame(tick); }
   setButtons(); renderEnd();
@@ -708,7 +739,7 @@ async function stop(){
   $("stage").style.background=COLOR.prep; $("phase").textContent="Bereit"; $("count").className=""; $("count").textContent="--";
   $("where").innerHTML='Zirkel-Dauer: <span id="total"></span>'; $("next").textContent=""; $("music").textContent=""; $("bar").firstElementChild.style.width="0";
   renderIdle(); setButtons();
-  ytPause();
+  ytResetAll();
   if(connected()&&curUri&&!isYT(curUri)){ spActive=true; await pauseSpotify(); }
   curUri=""; spActive=false; for(const k in mem) delete mem[k]; played.clear();
 }
@@ -743,7 +774,8 @@ for(const id of VOL_IDS){ $(id).addEventListener("input",()=>liveVol(id)); $(id)
 setInterval(renderVolLabels,500); renderVolLabels();
 checkFields();
 if(needYT()) loadYT();
-for(const id of LINK_FIELDS) $(id).addEventListener("change",()=>{ if(needYT()) loadYT(); });
+for(const id of LINK_FIELDS) $(id).addEventListener("change",()=>{ if(needYT()) loadYT(); else if(ytApiReady) ensurePlayers(); });
+$("btnYtPrime").onclick=()=>{ for(const o of Object.values(yt)) if(o.primed&&ytCurKey!==o.key){ o.primed=false; } primeYT(); };
 $("btnWarm").onclick=startWarm; $("btnCool").onclick=startCool; $("btnGroup").onclick=openSongs;
 $("btnClosePanel").onclick=closeSongs; $("btnBackWarm").onclick=endGroup;
 $("btnStart").onclick=start; $("btnPause").onclick=togglePause; $("btnSkip").onclick=skip; $("btnStop").onclick=stop;
