@@ -144,7 +144,14 @@
     <div id="spState" class="small">Nicht verbunden – der Timer läuft trotzdem (nur Signale).</div>
     <label>Client ID<input id="clientId" placeholder="aus dem Spotify Developer Dashboard"></label>
     <div class="row"><button id="btnConnect" class="pri">Mit Spotify verbinden</button></div>
-    <label>Abspielgerät
+    <label>Spotify abspielen über
+      <select id="spOut">
+        <option value="web">Diese Seite (Lautstärke pro Phase möglich)</option>
+        <option value="app">Spotify-App fernsteuern</option>
+      </select>
+    </label>
+    <div id="wpState" class="small"></div>
+    <label id="deviceLabel">Abspielgerät
       <select id="device"><option value="">Aktives Gerät verwenden</option></select>
     </label>
     <div class="row"><button id="btnDevices">Geräte neu laden</button><button id="btnTest">Test: Trainingsmusik</button></div>
@@ -170,7 +177,7 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const FIELDS = ["prep","stations","rounds","work","rest","change","mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool","endMode","resume","shuffle","lead","vWork","vRest","vChange","vWarm","vCool","beeps","voice","clientId","device"];
+const FIELDS = ["prep","stations","rounds","work","rest","change","mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool","endMode","resume","shuffle","lead","vWork","vRest","vChange","vWarm","vCool","beeps","voice","clientId","device","spOut"];
 const LINK_FIELDS = ["mWarm","mGroup","mWork","mRest","mChange","mPrep","mCool"];
 const store = {
   get(k){ try{ return localStorage.getItem("hiit_"+k); }catch(e){ return null; } },
@@ -245,7 +252,7 @@ const fmt = ms => { const s=Math.max(0,Math.round(ms/1000)); return Math.floor(s
 
 /* ---------- Audio-Signale ---------- */
 let actx=null;
-function initAudio(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume(); }catch(e){} primeYT(); }
+function initAudio(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); actx.resume(); }catch(e){} try{ if(wp&&useWeb()) wp.activateElement(); }catch(e){} primeYT(); }
 function beep(freq=880,dur=.15,vol=.5){
   if(!$("beeps").checked||!actx) return;
   const o=actx.createOscillator(), g=actx.createGain();
@@ -259,7 +266,7 @@ function say(text){
 }
 
 /* ---------- Spotify ---------- */
-const SCOPES="user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative";
+const SCOPES="user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative streaming user-read-email user-read-private";
 const redirectUri = location.origin + location.pathname;
 const sp = { token:store.get("tok"), refresh:store.get("ref"), exp:+store.get("exp")||0, scope:store.get("scope")||"" };
 function setStatus(msg,cls=""){ const el=$("status"); el.textContent=msg; el.className=cls; }
@@ -316,16 +323,19 @@ async function api(method,path,body){
   return j;
 }
 const connected = () => !!(sp.token||sp.refresh);
-const needsReconnect = () => connected() && sp.scope && !sp.scope.includes("playlist-read-private");
+const useWeb = () => $("spOut").value==="web";
+const needsReconnect = () => connected() && sp.scope && (!sp.scope.includes("playlist-read-private") || (useWeb() && !sp.scope.includes("streaming")));
 function renderSpState(){
   $("spState").innerHTML = !connected() ? "Nicht verbunden – der Timer läuft trotzdem (nur Signale)."
-    : needsReconnect() ? '<span class="err">Bitte einmal „Neu verbinden“ – für die Liedauswahl braucht es eine zusätzliche Berechtigung.</span>'
+    : needsReconnect() ? '<span class="err">Bitte einmal „Neu verbinden“ – es braucht eine zusätzliche Berechtigung.</span>'
     : '<span class="ok">Verbunden ✔</span>';
   $("btnConnect").textContent = connected() ? "Neu verbinden" : "Mit Spotify verbinden";
 }
 const devVol={};
-const devQ = (sep="?") => { const d=$("device").value; return d ? sep+"device_id="+encodeURIComponent(d) : ""; };
+const devId = () => (useWeb() && wpDevice) ? wpDevice : $("device").value;
+const devQ = (sep="?") => { const d=devId(); return d ? sep+"device_id="+encodeURIComponent(d) : ""; };
 function renderVolHint(){
+  if(useWeb()){ $("volHint").textContent=""; return; }
   const d=$("device").value, s=devVol[d];
   $("volHint").textContent = (d && s===false) ? "⚠️ Das gewählte Gerät erlaubt keine Lautstärke-Steuerung über Spotify." : "";
   $("volHint").className = "small err";
@@ -337,9 +347,40 @@ async function loadDevices(){
     sel.innerHTML='<option value="">Aktives Gerät verwenden</option>';
     for(const d of (j&&j.devices)||[]){ devVol[d.id]=d.supports_volume!==false; const o=document.createElement("option"); o.value=d.id; o.textContent=`${d.name} (${d.type})${d.is_active?" – aktiv":""}`; sel.appendChild(o); }
     if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
-    if(!(j&&j.devices&&j.devices.length)) setStatus("Kein Gerät gefunden – Spotify-App öffnen und neu laden.","err");
+    if(!(j&&j.devices&&j.devices.length) && !useWeb()) setStatus("Kein Gerät gefunden – Spotify-App öffnen und neu laden.","err");
     renderVolHint();
   }catch(e){ setStatus(e.message,"err"); }
+}
+
+/* ---------- Spotify Web-Player (Musik läuft in dieser Seite) ---------- */
+let wp=null, wpDevice=null, wpLoading=false;
+function wpMsg(t,cls=""){ $("wpState").textContent=t; $("wpState").className="small "+cls; }
+function renderOut(){
+  const web=useWeb();
+  $("deviceLabel").style.display = web ? "none" : "";
+  if(!web){ wpMsg(""); return; }
+  if(!connected()) wpMsg("Zuerst mit Spotify verbinden.");
+  else if(needsReconnect()) wpMsg("Bitte „Neu verbinden“ tippen (Berechtigung für den Web-Player).","err");
+  else if(wpDevice) wpMsg("✔ Web-Player bereit – Musik kommt aus dieser Seite (bzw. dem verbundenen Lautsprecher).","ok");
+  else wpMsg("Web-Player wird geladen …");
+}
+function loadWebPlayer(){
+  renderOut();
+  if(!useWeb()||!connected()||needsReconnect()||wp||wpLoading) return;
+  wpLoading=true;
+  window.onSpotifyWebPlaybackSDKReady=()=>{
+    wp=new Spotify.Player({name:"HIIT Timer",volume:0.8,getOAuthToken:cb=>{ ensureToken().then(()=>cb(sp.token)); }});
+    wp.addListener("ready",({device_id})=>{ wpDevice=device_id; renderOut(); });
+    wp.addListener("not_ready",()=>{ wpDevice=null; wpMsg("Web-Player getrennt – Seite neu laden.","err"); });
+    wp.addListener("initialization_error",({message})=>{ wpMsg("⚠️ Dieser Browser kann Spotify nicht direkt abspielen ("+message+"). Bitte „Spotify-App fernsteuern“ wählen.","err"); });
+    wp.addListener("authentication_error",()=>{ wpMsg("Bitte „Neu verbinden“ tippen.","err"); });
+    wp.addListener("account_error",()=>{ wpMsg("Der Web-Player braucht Spotify Premium.","err"); });
+    wp.addListener("playback_error",({message})=>{ setStatus("Spotify-Wiedergabefehler: "+message,"err"); });
+    wp.connect();
+  };
+  const sc=document.createElement("script"); sc.src="https://sdk.scdn.co/spotify-player.js";
+  sc.onerror=()=>{ wpLoading=false; wpMsg("Spotify-Web-Player konnte nicht geladen werden (Internet?).","err"); };
+  document.head.appendChild(sc);
 }
 
 let curUri="", curVol=null, volBlocked=false, shuffleSet=false, spActive=false; const mem={};
@@ -351,7 +392,9 @@ async function rememberSp(key){
 }
 async function rememberPos(){ if(isYT(curUri)) rememberYT(curUri); else await rememberSp(curUri); }
 async function setVol(v){
-  if(v===null||v===curVol||volBlocked) return;
+  if(v===null) return;
+  if(useWeb() && wp && wpDevice){ try{ await wp.setVolume(v/100); curVol=v; }catch(e){} return; }
+  if(v===curVol||volBlocked) return;
   try{ await api("PUT",`/me/player/volume?volume_percent=${v}`+devQ("&")); curVol=v; }
   catch(e){ if(e.status===403||e.status===400){ volBlocked=true; $("volHint").textContent="⚠️ Dieses Gerät lässt die Lautstärke nicht fernsteuern – Musik läuft trotzdem."; $("volHint").className="small err"; } }
 }
@@ -383,6 +426,7 @@ async function playMusic(key, vol, opts={}){
     return true;
   }
   if(!connected()){ setStatus("Für Spotify-Musik zuerst mit Spotify verbinden.","err"); return false; }
+  if(useWeb() && !wpDevice){ setStatus("Spotify-Web-Player ist noch nicht bereit – kurz warten (siehe „Spotify verbinden“).","err"); loadWebPlayer(); return false; }
   try{
     const jobs=[setVol(vol)];
     if(key!==curUri){
@@ -782,7 +826,9 @@ $("btnStart").onclick=start; $("btnPause").onclick=togglePause; $("btnSkip").onc
 $("btnConnect").onclick=connect; $("btnDevices").onclick=loadDevices;
 $("btnTest").onclick=async()=>{ saveSettings(); initAudio(); const u=musicFor("work"); if(!u){ setStatus("Trainingsmusik: "+linkProblem($("mWork").value),"err"); return; } if(curUri===u){ curUri=""; } if(await playMusic(u,volFor("work"))) setStatus("Trainingsmusik läuft ✔","ok"); };
 renderIdle(); renderSpState(); setButtons();
-handleRedirect().then(()=>{ if(connected()) loadDevices(); });
+handleRedirect().then(()=>{ if(connected()){ loadDevices(); loadWebPlayer(); } });
+$("spOut").addEventListener("change",()=>{ curVol=null; renderSpState(); renderVolHint(); loadWebPlayer(); });
+renderOut();
 </script>
 </body>
 </html>
